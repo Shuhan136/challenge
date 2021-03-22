@@ -3,8 +3,8 @@ import collections
 import time
 import sys
 start = time.time()
-SERVER = True
-TIME = False
+SERVER = False
+TIME = True
 # while True:
 #     line = sy
 # A = 3
@@ -16,7 +16,7 @@ host_dict = {}
 # io_host_dict = {}  # I/O密集型服务器
 vm_dict = {}
 if not SERVER:
-    PATH = 'E:\HW_JYTZS\\training-data/training-1.txt'
+    PATH = '/data1/HUAWEI/training-1.txt'
     with open(PATH) as f:
         lines = f.readlines()
 
@@ -120,20 +120,45 @@ class Host:
         self.B_cpu = host_dict[name][0]/2
         self.A_mem = host_dict[name][1]/2
         self.B_mem = host_dict[name][1]/2
+        self.ID = -1
+        # self.AA_cpu = host_dict[name][0] / 2
+        # self.AA_mem = host_dict[name][1] / 2
+        self.contains_vm = []
+        self.ori_A_cpu = self.A_cpu
+        self.ori_A_mem = self.A_mem
+        self.ori_B_cpu = self.B_cpu
+        self.ori_B_mem = self.B_mem
+        self.use_ratio = 0
 
-        self.AA_cpu = host_dict[name][0] / 2
-        self.AA_mem = host_dict[name][1] / 2
-    def putvm(self,vm):
+    def make_id(self,id):
+        self.ID = id
+
+    def getAbs(self):
+        return abs(self.A_cpu-self.A_mem) + abs(self.B_cpu -self.B_mem)
+
+    def space(self):
+        return self.A_mem + self.A_cpu +self.B_mem + self.B_cpu
+
+    def sapce_ori(self):
+        return self.ori_A_cpu + self.ori_A_mem + self.ori_B_cpu + self.ori_B_mem
+
+    def useRatio(self):
+        self.use_ratio = 1-(self.space()/self.sapce_ori())
+        return self.use_ratio
+
+    def putvm(self,vm,vm_id):
         info = vm_dict[vm]
         cpu,mem,core = info
         if core == 0:
             if self.A_cpu >=cpu and self.A_mem>=mem: #优先放A节点
                 self.A_cpu -= cpu
                 self.A_mem -= mem
+                self.contains_vm.append((vm,vm_id,'A'))
                 return 'A'
             elif self.B_cpu>=cpu and self.B_mem>=mem:
                 self.B_cpu -= cpu
                 self.B_mem -= mem
+                self.contains_vm.append((vm, vm_id, 'B'))
                 return 'B'
             else:
                 return 'NULL'
@@ -143,6 +168,7 @@ class Host:
                 self.B_cpu -= cpu/2
                 self.A_mem -= mem/2
                 self.B_mem -= mem/2
+                self.contains_vm.append((vm, vm_id,'ALL'))
                 return 'ALL'
             else:
                 return 'NULL'
@@ -163,20 +189,23 @@ class Host:
             else:
                 return False
 
-    def delvm(self,vm,type):
+    def delvm(self,vm,vm_id,type):
         info = vm_dict[vm]
         cpu, mem, core = info
         if type == 'A':
             self.A_cpu += cpu
             self.A_mem += mem
+            self.contains_vm.remove((vm,vm_id,'A'))
         elif type == 'B':
             self.B_cpu += cpu
             self.B_mem += mem
+            self.contains_vm.remove((vm, vm_id, 'B'))
         else:
             self.A_cpu += cpu/2
             self.A_mem += mem/2
             self.B_cpu += cpu/2
             self.B_mem += mem/2
+            self.contains_vm.remove((vm, vm_id, 'ALL'))
 
 class hostList:
 
@@ -184,9 +213,15 @@ class hostList:
         self.allHost = []
         self.id_info = {}
         self.out = []
-        self.host0id = [0]
-        self.host1id = [1]
-        self.hostIDlist = 1
+        self.mig_list = []
+        # self.host0id = [0]
+        # self.host1id = [1]
+        # self.hostIDlist = 1
+
+    def getLength(self):
+        return len(self.allHost)
+
+
 
     def addHost(self,vm_name,host_keys1):  # 添加I/O密集型服务器
 
@@ -233,7 +268,7 @@ class hostList:
             # for i in range(len(self.allHost)):
             for i in hostlist:
                 if cpu + mem <= allhh[i]:
-                    res = self.allHost[i].putvm(dayvm[a][0])
+                    res = self.allHost[i].putvm(dayvm[a][0],dayvm[a][2])
                     if res != 'NULL':
                         INDEX[dayvm[a][2]] = [i, res, dayvm[a][2], dayvm[a][0]]
                         del dayvm1[tmp]
@@ -247,7 +282,7 @@ class hostList:
             tmp = -1
             for a in range(len(dayvm1)):
                 tmp = tmp + 1
-                res = self.allHost[len(self.allHost)-1].putvm(dayvm1[a][0])
+                res = self.allHost[len(self.allHost)-1].putvm(dayvm1[a][0],dayvm1[a][2])
                 if res != 'NULL':
                     INDEX[dayvm1[a][2]] = [len(self.allHost)-1, res, dayvm1[a][2], dayvm1[a][0]]
                     del dayvm2[tmp]
@@ -255,6 +290,63 @@ class hostList:
 
             dayvm1 = dayvm2[:]
         return INDEX
+
+    def getVmNum(self):
+        sum = 0
+        for host in self.allHost:
+            sum += len(host.contains_vm)
+        return sum
+
+    def mig(self):
+        length = self.getLength()
+        vmNum = self.getVmNum()
+        migNum = int(vmNum*0.002)
+        cont = 0
+        if migNum > 0:
+            # hosts = [host for host in self.allHost if host.A_mem == 0 or host.A_cpu == 0 or host.B_cpu == 0 or host.B_mem == 0]
+            mig_hosts = sorted(self.allHost,key=lambda x:x.useRatio())
+            # for
+            for host_src in mig_hosts:
+                thisID = host_src.ID
+                flag = 0
+                for vm_select in host_src.contains_vm[1:-1][::-1] + host_src.contains_vm[-1:] + host_src.contains_vm[:1]:
+                    for i, host_tar in enumerate(self.allHost):
+                        if host_tar.ID == thisID:
+                            continue
+                        res = host_tar.putvm(vm_select[0],vm_select[1])
+                        if res!='NULL':
+                            self.mig_list.append((vm_select[1], host_tar.ID, res))
+                            host_src.delvm(vm_select[0],vm_select[1],vm_select[2])
+                            # host_tar.useRatio()
+                            # host_src.useRatio()
+                            self.id_info[vm_select[1]] = [vm_select[0], i, res]
+                            cont +=1
+                            flag = 1
+                            if cont >= migNum:
+                                return
+                            break
+                    if flag ==1:
+                        break
+
+
+                    # print()
+
+
+            # print()
+            #         vm_select = vm_list[max_index]
+            #         lis = list(range(length))
+            #         lis.remove(item[0])
+            #         for i in lis:
+            #             hostx = self.allHost[i]
+            #             res = hostx.putvm(vm_select[0],vm_select[1])
+            #             if res!='NULL':
+            #                 self.mig_list.append((vm_select[1], hostx.ID, res))
+            #                 host.delvm(vm_select[0],vm_select[1],vm_select[2])
+            #                 self.id_info[vm_select[1]] = [vm_select[0], i, res]
+            #                 cont +=1
+            #                 if cont >= migNum:
+            #                     return
+            #                 break
 
 
 
@@ -276,7 +368,7 @@ class hostList:
 
     def del_vm(self, id):
         vm_name,host_id,type = self.id_info[id]
-        self.allHost[host_id].delvm(vm_name, type)
+        self.allHost[host_id].delvm(vm_name,id,type)
 
     def Price(self): # 计算服务器性价比
         def takeSecond(elem):
@@ -301,11 +393,13 @@ def main():
     ITER = 0
     # dday_num = 3000 + 1
     host_keys = my_hostList.Price()  #将虚拟机进行排序
-    for day in data:
+    for iday,day in enumerate(data):
         # dday_num = dday_num - 1 # 服务器可用天数
         # host_keys = my_hostList.Price(dday_num)
         VMID = []
         dayvm = []
+        if iday!=0:
+            my_hostList.mig()
         for line in day:
             add_or_del = line.split(',')[0][1:]
             ID = int(line.split(',')[-1][:-1])
@@ -333,13 +427,27 @@ def main():
         out.append('(purchase,'+' '+str(len(name_indies.keys()))+')')
         for k,v in name_indies.items():
             out.append('('+str(k)+','+' '+str(len(v))+')')
+        if iday !=0:
 
-        out.append('(migration, 0)')
-
+            mig_num = len(my_hostList.mig_list)
+            if mig_num==0:
+                out.append('(migration, 0)')
+            else:
+                out.append('(migration,'+' '+str(mig_num)+')')
+                for item in my_hostList.mig_list:
+                    if item[2]=='ALL':
+                        out.append('(' + str(item[0]) + ',' + ' ' + str(item[1])+')')
+                    else:
+                        out.append('('+str(item[0])+','+' '+str(item[1])+','+' '+item[2]+')')
+        else:
+            out.append('(migration, 0)')
+        my_hostList.mig_list.clear()
         for k,v in name_indies.items():
             for item in v:
                 index_id[item] = start_id
                 start_id += 1
+        for index1,host in zip(range(temp,len(my_hostList.allHost)),my_hostList.allHost[temp:]):
+            host.make_id(index_id[index1])
         operate = my_hostList.out
         new_operate = []
         for line in operate:
@@ -349,7 +457,6 @@ def main():
                 new_operate.append('('+str(new_index)+')')
             else:
                 new_operate.append('('+str(new_index)+','+' '+line[1]+')')
-
         out += new_operate
         my_hostList.out.clear()
         ITER +=1
