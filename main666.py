@@ -300,7 +300,8 @@ class hostList:
     def mig(self):
         length = self.getLength()
         vmNum = self.getVmNum()
-        migNum = int(vmNum*0.002)
+        migNum = int(vmNum*0.005)
+        sorted_index = sorted(range(length),key=lambda x:self.allHost[x].space())[int(0.5*length):]
         cont = 0
         if migNum > 0:
             # hosts = [host for host in self.allHost if host.A_mem == 0 or host.A_cpu == 0 or host.B_cpu == 0 or host.B_mem == 0]
@@ -309,22 +310,25 @@ class hostList:
             for host_src in mig_hosts:
                 thisID = host_src.ID
                 flag = 0
-                for vm_select in host_src.contains_vm[1:-1][::-1] + host_src.contains_vm[-1:] + host_src.contains_vm[:1]:
-                    for i, host_tar in enumerate(self.allHost):
+                vms = sorted(host_src.contains_vm,key=lambda x:vm_dict[x[0]][0]+vm_dict[x[0]][1])
+                for vm_select in vms:
+                    for i in sorted_index:
+                        host_tar = self.allHost[i]
                         if host_tar.ID == thisID:
                             continue
-                        res = host_tar.putvm(vm_select[0],vm_select[1])
-                        if res!='NULL':
-                            self.mig_list.append((vm_select[1], host_tar.ID, res))
-                            host_src.delvm(vm_select[0],vm_select[1],vm_select[2])
-                            # host_tar.useRatio()
-                            # host_src.useRatio()
-                            self.id_info[vm_select[1]] = [vm_select[0], i, res]
-                            cont +=1
-                            flag = 1
-                            if cont >= migNum:
-                                return
-                            break
+                        if host_tar.space()>=vm_dict[vm_select[0]][0]+vm_dict[vm_select[0]][1]:
+                            res = host_tar.putvm(vm_select[0],vm_select[1])
+                            if res!='NULL':
+                                self.mig_list.append((vm_select[1], host_tar.ID, res))
+                                host_src.delvm(vm_select[0],vm_select[1],vm_select[2])
+                                # host_tar.useRatio()
+                                # host_src.useRatio()
+                                self.id_info[vm_select[1]] = [vm_select[0], i, res]
+                                cont +=1
+                                flag = 1
+                                if cont >= migNum:
+                                    return
+                                break
                     if flag ==1:
                         break
 
